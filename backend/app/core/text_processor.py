@@ -23,7 +23,7 @@ class TextProcessor:
             处理结果，包含地址和行程信息
         """
         try:
-            # 提取地址
+            # 提取地址 - 现在返回的是更完整的地址信息
             addresses = self.qwen_service.extract_addresses(text)
             if not addresses:
                 return {
@@ -34,21 +34,18 @@ class TextProcessor:
 
             logger.info(f"提取到{len(addresses)}个地址")
 
-            # 地理编码
+            # 地理编码 - 传入完整的地址信息
             locations = []
             for addr_info in addresses:
-                address = addr_info.get("address", "")
-                if not address:
-                    continue
-
-                # 地理编码
-                location = self.amap_service.geocode(address)
+                # 地理编码现在接收完整的地址信息字典
+                location = self.amap_service.geocode(addr_info)
                 if location:
-                    # 合并地址信息和地理编码结果
-                    location.update(addr_info)
+                    # 保留原始地址信息
+                    location['original_address'] = addr_info.get('address', '')
+                    location['time_mentioned'] = addr_info.get('time_mentioned', '')
                     locations.append(location)
                 else:
-                    logger.warning(f"地址'{address}'地理编码失败")
+                    logger.warning(f"地址'{addr_info.get('address', '')}'地理编码失败")
 
             if not locations:
                 return {

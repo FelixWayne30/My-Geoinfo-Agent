@@ -45,30 +45,36 @@ class AMapService:
 
         return signature
 
-    # backend/app/services/amap_service.py 优化地理编码函数
-
-    def geocode(self, address: str) -> Optional[Dict[str, Any]]:
+    def geocode(self, address_info: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
-        地理编码，将地址转换为经纬度坐标
-        https://lbs.amap.com/api/webservice/guide/api/georegeo
+        地理编码，使用更加智能的方式将完整地址信息转换为经纬度坐标
         """
         try:
-            # 清理地址文本
-            address = address.strip()
+            # 从address_info中获取结构化地址信息
+            address = address_info.get("address", "").strip()
+            province = address_info.get("province", "")
+            city = address_info.get("city", "")
+            district = address_info.get("district", "")
+
             if not address:
                 logger.warning("地址为空")
                 return None
 
             logger.info(f"正在地理编码地址: {address}")
 
-            # 构建参数
+            # 构建参数 - 使用更多信息提高准确性
             params = {
                 'key': self.api_key,
                 'address': address,
                 'output': 'JSON',
-                # 添加city参数可提高准确度
-                'city': '',  # 可以根据上下文设置默认城市
             }
+
+            # 如果有城市信息，优先使用它来提高精确度
+            if city:
+                params['city'] = city
+            elif province:
+                # 如果没有城市但有省份，用省份约束
+                params['city'] = province
 
             # 生成签名
             api_secret = os.getenv('AMAP_SECRET')
@@ -84,7 +90,16 @@ class AMapService:
 
             # 检查结果
             if data.get('status') == '1' and data.get('geocodes') and len(data['geocodes']) > 0:
-                result = data['geocodes'][0]
+                # 获取所有候选结果
+                candidates = data['geocodes']
+
+                # 如果只有一个结果，直接使用
+                if len(candidates) == 1:
+                    result = candidates[0]
+                else:
+                    # 否则使用更智能的匹配逻辑选择最佳结果
+                    result = self._select_best_geocode_result(candidates, address_info)
+
                 # 提取经纬度
                 location = result.get('location', '')
                 if location:
@@ -97,8 +112,10 @@ class AMapService:
                         'city': result.get('city', ''),
                         'district': result.get('district', ''),
                         'adcode': result.get('adcode', ''),
-                        'level': result.get('level', '')
+                        'level': result.get('level', ''),
+                        'confidence': address_info.get('confidence', 0.8)
                     }
+
                     logger.info(f"地理编码成功: {address} -> [{lng},{lat}]")
                     return geo_result
 
@@ -108,6 +125,47 @@ class AMapService:
         except Exception as e:
             logger.error(f"地理编码过程中出错: {str(e)}")
             return None
+
+    def _select_best_geocode_result(self, candidates: List[Dict], address_info: Dict) -> Dict:
+        """从多个候选结果中选择最佳匹配"""
+        # 如果有城市信息，优先选择匹配该城市的结果
+        expected_city = address_info.get("city", "")
+        expected_district = address_info.get("district", "")
+
+        # 根据匹配度评分
+        scored_candidates = []
+        for candidate in candidates:
+            score = 0
+
+            # 城市匹配加高分
+            if expected_city and candidate.get("city", "") == expected_city:
+                score += 50
+
+            # 区县匹配加分
+            if expected_district and candidate.get("district", "") == expected_district:
+                score += 30
+
+            # 详细程度加分 (更长的地址通常包含更多信息)
+            formatted_address = candidate.get("formatted_address", "")
+            score += min(len(formatted_address) / 5, 10)  # 最多加10分
+
+            # 精确度加分
+            if candidate.get("level") == "兴趣点":
+                score += 20  # 兴趣点通常最精确
+            elif candidate.get("level") == "门牌号":
+                score += 15
+            elif candidate.get("level") == "道路":
+                score += 10
+            elif candidate.get("level") == "村庄":
+                score += 5
+
+            scored_candidates.append((score, candidate))
+
+        # 按分数降序排序
+        scored_candidates.sort(reverse=True, key=lambda x: x[0])
+
+        # 返回得分最高的结果
+        return scored_candidates[0][1]
 
     def plan_route(self,
                    origin: str,
@@ -260,8 +318,6 @@ class AMapService:
         except Exception as e:
             logger.error(f"生成静态地图过程中出错: {str(e)}")
             return ""
-
-    # backend/app/services/amap_service.py 中的prepare_map_data方法
 
     def prepare_map_data(self, locations: List[Dict[str, Any]]) -> Dict[str, Any]:
         """

@@ -107,6 +107,7 @@ async def process_image(
         )
 
 
+# 修改处理文本的路由
 @app.post("/process-text")
 async def process_text(
         text: str = Form(...),
@@ -130,7 +131,6 @@ async def process_text(
             status_code=500,
             content={"success": False, "message": f"处理文本时出错: {str(e)}"}
         )
-
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
