@@ -1,3 +1,4 @@
+/* frontend/src/App.css - 只修改消息宽度部分 */
 * {
   margin: 0;
   padding: 0;
@@ -32,7 +33,7 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  max-width: 1000px;
+  max-width: 1100px; /* 从1000px增加到1100px */
   margin: 0 auto;
   background-color: var(--bg-color);
 }
@@ -60,20 +61,23 @@ body {
 }
 
 .message {
-  max-width: 80%;
   padding: 0.75rem 1rem;
   border-radius: 0.75rem;
   white-space: pre-wrap;
   overflow-wrap: break-word;
 }
 
+/* 用户消息 */
 .message-row.human .message {
+  max-width: 80%;
   background-color: var(--human-msg-bg);
   color: var(--human-msg-color);
   border-top-right-radius: 0.25rem;
 }
 
+/* 助手消息 - 增加宽度 */
 .message-row.assistant .message {
+  max-width: 90%; /* 从80%增加到90% */
   background-color: var(--assistant-msg-bg);
   color: var(--assistant-msg-color);
   border: 1px solid var(--border-color);
@@ -94,14 +98,11 @@ body {
 
 .map-container {
   margin-top: 0.75rem;
-  height: 300px;
-  background-color: #f6f6f6;
+  width: 100%;
+  height: 500px;
   border-radius: 0.5rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #666;
-  border: 1px dashed #ccc;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
 }
 
 .input-container {
@@ -222,19 +223,18 @@ textarea {
 }
 
 @media (max-width: 640px) {
-  .message {
+  .message-row.human .message {
     max-width: 90%;
   }
-}
-.static-map {
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  border-radius: 0.5rem;
+
+  .message-row.assistant .message {
+    max-width: 95%;
+  }
 }
 
-.static-map img {
-  width: 100%;
-  height: auto;
-  object-fit: contain;
+/* 大屏幕上增加最大宽度 */
+@media (min-width: 1200px) {
+  .chat-app {
+    max-width: 1200px;
+  }
 }

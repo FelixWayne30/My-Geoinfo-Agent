@@ -1,4 +1,3 @@
-# backend/app/services/amap_service.py
 import os
 import json
 import logging
@@ -46,17 +45,29 @@ class AMapService:
 
         return signature
 
+    # backend/app/services/amap_service.py 优化地理编码函数
+
     def geocode(self, address: str) -> Optional[Dict[str, Any]]:
         """
         地理编码，将地址转换为经纬度坐标
         https://lbs.amap.com/api/webservice/guide/api/georegeo
         """
         try:
+            # 清理地址文本
+            address = address.strip()
+            if not address:
+                logger.warning("地址为空")
+                return None
+
+            logger.info(f"正在地理编码地址: {address}")
+
             # 构建参数
             params = {
                 'key': self.api_key,
                 'address': address,
-                'output': 'JSON'
+                'output': 'JSON',
+                # 添加city参数可提高准确度
+                'city': '',  # 可以根据上下文设置默认城市
             }
 
             # 生成签名
@@ -65,8 +76,11 @@ class AMapService:
                 params['sig'] = self._generate_signature(params)
 
             # 发送请求
-            response = requests.get(f"{self.base_url}/geocode/geo", params=params)
+            response = requests.get(f"{self.base_url}/geocode/geo", params=params, timeout=5)
             data = response.json()
+
+            # 记录原始响应
+            logger.info(f"地理编码响应: {data}")
 
             # 检查结果
             if data.get('status') == '1' and data.get('geocodes') and len(data['geocodes']) > 0:
@@ -75,7 +89,7 @@ class AMapService:
                 location = result.get('location', '')
                 if location:
                     lng, lat = location.split(',')
-                    return {
+                    geo_result = {
                         'latitude': float(lat),
                         'longitude': float(lng),
                         'formatted_address': result.get('formatted_address', ''),
@@ -85,6 +99,8 @@ class AMapService:
                         'adcode': result.get('adcode', ''),
                         'level': result.get('level', '')
                     }
+                    logger.info(f"地理编码成功: {address} -> [{lng},{lat}]")
+                    return geo_result
 
             logger.warning(f"地理编码失败，地址: {address}, 响应: {data}")
             return None
@@ -155,8 +171,6 @@ class AMapService:
         except Exception as e:
             logger.error(f"路径规划过程中出错: {str(e)}")
             return None
-
-    # backend/app/services/amap_service.py 中修改 get_static_map 方法
 
     def get_static_map(self, locations: List[Dict[str, Any]], zoom: int = 13) -> str:
         """
@@ -246,3 +260,84 @@ class AMapService:
         except Exception as e:
             logger.error(f"生成静态地图过程中出错: {str(e)}")
             return ""
+
+    # backend/app/services/amap_service.py 中的prepare_map_data方法
+
+    def prepare_map_data(self, locations: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        准备前端地图渲染所需的数据
+
+        Args:
+            locations: 位置点列表
+
+        Returns:
+            包含地图渲染所需数据的字典
+        """
+        if not locations:
+            return {"success": False, "message": "无位置数据"}
+
+        # 记录日志以便调试
+        logger.info(f"准备地图数据，共{len(locations)}个位置点")
+
+        # 提取位置点信息
+        map_points = []
+        for i, loc in enumerate(locations):
+            if 'longitude' in loc and 'latitude' in loc:
+                # 确保经纬度是浮点数
+                lng = float(loc['longitude'])
+                lat = float(loc['latitude'])
+
+                # 确定点类型
+                point_type = "起点" if i == 0 else "终点" if i == len(locations) - 1 else "途经点"
+
+                # 获取地址信息
+                address = loc.get('formatted_address', '') or loc.get('address', '')
+                logger.info(f"点{i + 1}: 类型={point_type}, 坐标=[{lng},{lat}], 地址={address}")
+
+                map_points.append({
+                    "lnglat": [lng, lat],
+                    "name": address,
+                    "type": point_type,
+                    "index": i
+                })
+
+        # 如果有多个点，获取路径规划数据
+        route_data = None
+        if len(map_points) >= 2:
+            try:
+                # 构建起点终点坐标
+                start = f"{map_points[0]['lnglat'][0]},{map_points[0]['lnglat'][1]}"
+                end = f"{map_points[-1]['lnglat'][0]},{map_points[-1]['lnglat'][1]}"
+
+                # 处理途经点
+                waypoints = None
+                if len(map_points) > 2:
+                    waypoint_coords = []
+                    for point in map_points[1:-1]:
+                        waypoint_coords.append(f"{point['lnglat'][0]},{point['lnglat'][1]}")
+                    waypoints = ";".join(waypoint_coords)
+                    logger.info(f"途经点: {waypoints}")
+
+                # 获取路径规划数据
+                route_result = self.plan_route(start, end, waypoints)
+
+                if route_result and route_result.get('status') == '1':
+                    route_data = route_result
+                    logger.info("路径规划数据获取成功")
+                else:
+                    logger.warning(f"路径规划失败: {route_result}")
+            except Exception as e:
+                logger.error(f"获取路径数据出错: {str(e)}")
+
+        result = {
+            "success": True,
+            "mapKey": self.api_key,
+            "points": map_points,
+            "routeData": route_data
+        }
+
+        # 记录完整的结果（仅用于调试）
+        logger.info(
+            f"地图数据准备完成: 成功={result['success']}, 点数={len(result['points'])}, 是否有路线={result['routeData'] is not None}")
+
+        return result

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import axios from 'axios'
 import './App.css'
+import MapViewer from './components/MapViewer'
 
 function App() {
   const [messages, setMessages] = useState([])
@@ -17,6 +18,16 @@ function App() {
   useEffect(() => {
     scrollToBottom()
   }, [messages])
+
+  // 添加初始欢迎消息
+  useEffect(() => {
+    setMessages([
+      {
+        type: 'assistant',
+        content: '您好！我是智能地理助手。您可以：\n- 发送包含地址信息的文本\n- 上传含有地理坐标的照片\n我将帮您提取地理信息并进行可视化。'
+      }
+    ])
+  }, [])
 
   // 自动调整文本框高度
   useEffect(() => {
@@ -38,124 +49,112 @@ function App() {
     };
   }, [input]);
 
-  // 添加初始欢迎消息
-  useEffect(() => {
-    setMessages([
-      {
-        type: 'assistant',
-        content: '您好！我是智能地理助手。您可以：\n- 发送包含地址信息的文本\n- 上传含有地理坐标的照片\n我将帮您提取地理信息并进行可视化。'
-      }
-    ])
-  }, [])
+  // 处理文本输入提交
+  const handleSubmit = async () => {
+    if (!input.trim()) return
 
-// 修改handleSubmit函数
-const handleSubmit = async () => {
-  if (!input.trim()) return;
+    // 添加用户消息到聊天记录
+    setMessages(prev => [...prev, { type: 'human', content: input }])
 
-  // 添加用户消息到聊天记录
-  setMessages(prev => [...prev, { type: 'human', content: input }]);
+    const userInput = input
+    setInput('')
+    setLoading(true)
 
-  const userInput = input;
-  setInput('');
-  setLoading(true);
-
-  try {
-    // 调用后端API处理文本
-    const formData = new FormData();
-    formData.append('text', userInput);
-
-    const response = await axios.post('http://localhost:8000/process-text',
-      formData,
-      { headers: { 'Content-Type': 'multipart/form-data' } }
-    );
-
-    // 构建回复消息
-    let content = response.data.message || '处理完成';
-    let mapData = null;
-
-    // 如果有静态地图URL
-    if (response.data.static_map_url) {
-      mapData = {
-        staticMapUrl: response.data.static_map_url,
-        locations: response.data.locations || []
-      };
-    }
-
-    // 添加系统回复到聊天记录
-    setMessages(prev => [...prev, {
-      type: 'assistant',
-      content,
-      mapData
-    }]);
-  } catch (error) {
-    console.error('请求失败:', error);
-    setMessages(prev => [...prev, {
-      type: 'assistant',
-      content: '抱歉，处理您的请求时出错了。'
-    }]);
-  } finally {
-    setLoading(false);
-  }
-};
-
-// 修改handleImageUpload函数
-const handleImageUpload = async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-
-  // 添加用户消息到聊天记录（显示图片预览）
-  const reader = new FileReader();
-  reader.onload = async (event) => {
-    setMessages(prev => [...prev, {
-      type: 'human',
-      content: '上传了图片:',
-      image: event.target.result
-    }]);
-
-    // 创建FormData对象上传图片
-    const formData = new FormData();
-    formData.append('file', file);
-
-    setLoading(true);
     try {
-      // 调用后端API处理图片
-      const response = await axios.post('http://localhost:8000/process-image',
-        formData,
-        { headers: { 'Content-Type': 'multipart/form-data' } }
-      );
+      // 调用后端API处理文本
+      const formData = new FormData()
+      formData.append('text', userInput)
 
-      // 构建回复消息
-      let content = response.data.message || '处理完成';
-      let mapData = null;
+      const response = await axios.post('http://localhost:8000/process-text',
+  formData,
+  { headers: { 'Content-Type': 'multipart/form-data' } }
+);
 
-      // 如果有静态地图URL
-      if (response.data.static_map_url) {
-        mapData = {
-          staticMapUrl: response.data.static_map_url,
-          gps_info: response.data.gps_info
-        };
-      }
+// 详细记录地图数据
+console.log("API返回完整数据:", response.data);
 
-      // 添加系统回复到聊天记录
-      setMessages(prev => [...prev, {
-        type: 'assistant',
-        content,
-        mapData
-      }]);
+// 构建回复消息
+let content = response.data.message || '处理完成';
+let mapData = null;
+
+// 检查并使用map_data字段
+if (response.data.map_data && response.data.map_data.success) {
+  mapData = response.data.map_data;
+  console.log("使用地图数据:", mapData);
+}
+
+// 添加系统回复到聊天记录
+setMessages(prev => [...prev, {
+  type: 'assistant',
+  content,
+  mapData
+}]);
     } catch (error) {
-      console.error('上传失败:', error);
+      console.error('请求失败:', error)
       setMessages(prev => [...prev, {
         type: 'assistant',
-        content: '抱歉，处理图片时出错了。'
-      }]);
+        content: '抱歉，处理您的请求时出错了。'
+      }])
     } finally {
-      setLoading(false);
-      // 清空文件输入，允许重复上传同一文件
-      e.target.value = null;
+      setLoading(false)
     }
-  };
-  reader.readAsDataURL(file);
-};
+  }
+
+  // 处理图片上传
+  const handleImageUpload = async (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+
+    // 添加用户消息到聊天记录（显示图片预览）
+    const reader = new FileReader()
+    reader.onload = async (event) => {
+      setMessages(prev => [...prev, {
+        type: 'human',
+        content: '上传了图片:',
+        image: event.target.result
+      }])
+
+      // 创建FormData对象上传图片
+      const formData = new FormData()
+      formData.append('file', file)
+
+      setLoading(true)
+      try {
+        // 调用后端API处理图片
+        const response = await axios.post('http://localhost:8000/process-image',
+          formData,
+          { headers: { 'Content-Type': 'multipart/form-data' } }
+        )
+
+        // 构建回复消息
+        let content = response.data.message || '处理完成'
+        let mapData = null
+
+        // 如果有地图数据
+        if (response.data.map_data && response.data.map_data.success) {
+          mapData = response.data.map_data
+        }
+
+        // 添加系统回复到聊天记录
+        setMessages(prev => [...prev, {
+          type: 'assistant',
+          content,
+          mapData
+        }])
+      } catch (error) {
+        console.error('上传失败:', error)
+        setMessages(prev => [...prev, {
+          type: 'assistant',
+          content: '抱歉，处理图片时出错了。'
+        }])
+      } finally {
+        setLoading(false)
+        // 清空文件输入，允许重复上传同一文件
+        e.target.value = null
+      }
+    }
+    reader.readAsDataURL(file)
+  }
 
   // 键盘回车发送
   const handleKeyDown = (e) => {
@@ -178,16 +177,10 @@ const handleImageUpload = async (e) => {
               )}
               <p>{msg.content}</p>
 
-              {/* 如果有地图数据，显示地图 */}
+              {/* 使用地图组件显示地图 */}
               {msg.mapData && (
                 <div className="map-container">
-                  {msg.mapData.staticMapUrl ? (
-                    <div className="static-map">
-                      <img src={msg.mapData.staticMapUrl} alt="地理位置图" />
-                    </div>
-                  ) : (
-                    <p>地图信息加载失败</p>
-                  )}
+                  <MapViewer mapData={msg.mapData} />
                 </div>
               )}
             </div>

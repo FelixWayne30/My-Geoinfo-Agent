@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 # 加载环境变量
 load_dotenv()
 
+# 打印环境变量（调试用）
+print(f"DASHSCOPE_API_KEY设置状态: {'已设置' if os.getenv('DASHSCOPE_API_KEY') else '未设置'}")
+print(f"AMAP_API_KEY设置状态: {'已设置' if os.getenv('AMAP_API_KEY') else '未设置'}")
+
 # 创建FastAPI应用
 app = FastAPI(title="智能地理信息提取与可视化系统")
 
@@ -84,12 +88,16 @@ async def process_image(
         # 生成静态地图
         static_map_url = amap_service.get_static_map([gps_info])
 
+        # 准备地图数据
+        map_data = amap_service.prepare_map_data([gps_info])
+
         return {
             "success": True,
             "message": "成功从图片中提取GPS信息",
             "gps_info": gps_info,
             "image_info": image_info,
-            "static_map_url": static_map_url
+            "static_map_url": static_map_url,
+            "map_data": map_data
         }
     except Exception as e:
         logger.error(f"处理图片时出错: {str(e)}")
@@ -101,13 +109,20 @@ async def process_image(
 
 @app.post("/process-text")
 async def process_text(
-    text: str = Form(...),
-    text_processor: TextProcessor = Depends(get_text_processor)
+        text: str = Form(...),
+        text_processor: TextProcessor = Depends(get_text_processor),
+        amap_service: AMapService = Depends(get_amap_service)
 ):
     """处理文本，提取地址信息"""
     try:
         # 处理文本
         result = text_processor.process_text(text)
+
+        # 如果处理成功，添加地图数据
+        if result.get("success") and result.get("itinerary"):
+            map_data = amap_service.prepare_map_data(result["itinerary"])
+            result["map_data"] = map_data
+
         return result
     except Exception as e:
         logger.error(f"处理文本时出错: {str(e)}")
@@ -115,6 +130,7 @@ async def process_text(
             status_code=500,
             content={"success": False, "message": f"处理文本时出错: {str(e)}"}
         )
+
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
