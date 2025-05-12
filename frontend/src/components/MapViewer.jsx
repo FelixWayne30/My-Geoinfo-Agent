@@ -182,7 +182,7 @@ const MapViewer = ({ mapData }) => {
                 if (pointsArray.length > 1) {
                   const polyline = new window.AMap.Polyline({
                     path: pointsArray,
-                    strokeColor: '#3366FF',
+                    strokeColor: '#0f9a08',
                     strokeWeight: 6,
                     strokeOpacity: 0.8,
                     zIndex: 50,
