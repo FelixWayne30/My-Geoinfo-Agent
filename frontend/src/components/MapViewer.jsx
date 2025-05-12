@@ -182,7 +182,7 @@ const MapViewer = ({ mapData }) => {
                 if (pointsArray.length > 1) {
                   const polyline = new window.AMap.Polyline({
                     path: pointsArray,
-                    strokeColor: '#0f9a08',
+                    strokeColor: '#2e74c0',
                     strokeWeight: 6,
                     strokeOpacity: 0.8,
                     zIndex: 50,
@@ -208,35 +208,27 @@ const MapViewer = ({ mapData }) => {
       }
 
       // 调整地图视野 - 延迟执行以确保地图已完全加载
-      setTimeout(() => {
-        try {
-          // 检查边界是否有效
-          if (bounds.getNorthEast() && bounds.getSouthWest()) {
-            // 设置适当的缩放级别和中心点
-            map.setBounds(bounds, [60, 60, 60, 60]);
+    setTimeout(() => {
+  try {
+    // 检查边界是否有效
+    if (bounds.getNorthEast() && bounds.getSouthWest()) {
+      // 自动调整地图视野以适应所有标记点和路线
+      // 第二个参数是边距，保持一定的边距以美观显示
+      map.setFitView(null, false, [40, 40, 40, 40]);
 
-            // 确保不会缩放过大或过小
-            const zoom = map.getZoom();
-            if (zoom > 17) map.setZoom(17);
-            if (zoom < 9) map.setZoom(9);
-
-            // 确保地图中心是路线中心
-            const center = bounds.getCenter();
-            map.setCenter(center);
-
-            console.log("地图已调整至路线中心，缩放级别:", map.getZoom());
-          } else {
-            // 如果边界无效，则使用第一个点作为中心
-            if (points.length > 0) {
-              const [lng, lat] = points[0].lnglat;
-              map.setCenter(new window.AMap.LngLat(lng, lat));
-              map.setZoom(13);
-            }
-          }
-        } catch (e) {
-          console.error("调整地图视野错误:", e);
-        }
-      }, 200);
+      console.log("地图已自动调整视野，缩放级别:", map.getZoom());
+    } else {
+      // 如果无法获取有效边界，回退到第一个点
+      if (points.length > 0) {
+        const [lng, lat] = points[0].lnglat;
+        map.setCenter(new window.AMap.LngLat(lng, lat));
+        map.setZoom(13);
+      }
+    }
+  } catch (e) {
+    console.error("调整地图视野错误:", e);
+  }
+}, 200);
     };
 
     initMap();
