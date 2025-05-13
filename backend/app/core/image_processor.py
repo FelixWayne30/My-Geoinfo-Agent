@@ -1,8 +1,9 @@
-import exifread
-from PIL import Image
-from io import BytesIO
 import logging
-from typing import Dict, Tuple, Optional, Any
+from io import BytesIO
+from typing import Dict, Optional, Any
+from PIL import Image, ExifTags
+import traceback
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -10,104 +11,130 @@ logger = logging.getLogger(__name__)
 class ImageProcessor:
     """处理图像并提取地理位置信息"""
 
-    @staticmethod
-    def _convert_to_decimal(dms_str: str, ref: str) -> float:
-        """
-        将DMS(度分秒)格式转换为十进制度数格式
-
-        Args:
-            dms_str: EXIF中的度分秒字符串 如 "[41, 53, 23]"
-            ref: 方向参考 "N", "S", "E", "W"
-
-        Returns:
-            转换后的十进制度数
-        """
-        # 移除'[', ']'并分割
-        parts = dms_str.strip('[]').split(',')
-        if len(parts) != 3:
-            raise ValueError(f"无效的DMS值: {dms_str}")
-
-        # 解析度、分、秒
-        degrees = float(parts[0])
-        minutes = float(parts[1])
-        seconds = float(parts[2])
-
-        # 计算十进制度数
-        decimal = degrees + (minutes / 60.0) + (seconds / 3600.0)
-
-        # 根据参考确定正负符号
-        if ref in ['S', 'W']:
-            decimal = -decimal
-
-        return decimal
-
     def extract_gps_from_image(self, image_data: bytes) -> Optional[Dict[str, Any]]:
-        """
-        从图像中提取GPS坐标信息
-
-        Args:
-            image_data: 图像二进制数据
-
-        Returns:
-            包含经纬度信息的字典或None
-        """
+        """从图像中提取GPS坐标信息"""
         try:
-            # 使用exifread提取元数据
-            tags = exifread.process_file(BytesIO(image_data))
+            # 使用PIL打开图像
+            img = Image.open(BytesIO(image_data))
 
-            # 检查是否有GPS信息
-            if not ('GPS GPSLatitude' in tags and 'GPS GPSLongitude' in tags and
-                    'GPS GPSLatitudeRef' in tags and 'GPS GPSLongitudeRef' in tags):
-                logger.warning("图像中未找到GPS信息")
+            # 检查是否有EXIF数据
+            if not hasattr(img, '_getexif') or img._getexif() is None:
+                logger.warning("图片没有EXIF数据")
                 return None
 
-            # 提取GPS信息
-            lat = str(tags['GPS GPSLatitude'])
-            lat_ref = str(tags['GPS GPSLatitudeRef'])
-            lon = str(tags['GPS GPSLongitude'])
-            lon_ref = str(tags['GPS GPSLongitudeRef'])
+            # 获取所有EXIF数据
+            exif_data = img._getexif()
+            logger.info(f"EXIF标签: {[ExifTags.TAGS.get(tag, tag) for tag in exif_data.keys()]}")
 
-            # 转换为十进制
-            latitude = self._convert_to_decimal(lat, lat_ref)
-            longitude = self._convert_to_decimal(lon, lon_ref)
+            # 找到GPS信息对应的标签
+            gps_info = None
+            for tag, value in exif_data.items():
+                tag_name = ExifTags.TAGS.get(tag, tag)
+                if tag_name == 'GPSInfo':
+                    gps_info = value
+                    break
 
-            # 可选：提取GPS时间戳
-            timestamp = tags.get('GPS GPSTimeStamp')
-            datestamp = tags.get('GPS GPSDateStamp')
+            if not gps_info:
+                logger.warning("图片中没有GPS信息")
+                return None
 
-            # 构建结果
-            result = {
+            # 打印GPS信息标签
+            gps_tags = {key: ExifTags.GPSTAGS.get(key, key) for key in gps_info.keys()}
+            logger.info(f"GPS标签: {gps_tags}")
+
+            # 解析GPS数据
+            lat_ref = lon_ref = None
+            lat_deg = lon_deg = None
+
+            for key, val in gps_info.items():
+                tag_name = ExifTags.GPSTAGS.get(key, key)
+                if tag_name == 'GPSLatitudeRef':
+                    lat_ref = val
+                elif tag_name == 'GPSLatitude':
+                    lat_deg = val
+                elif tag_name == 'GPSLongitudeRef':
+                    lon_ref = val
+                elif tag_name == 'GPSLongitude':
+                    lon_deg = val
+
+            logger.info(f"GPS原始数据: lat_ref={lat_ref}, lat_deg={lat_deg}, lon_ref={lon_ref}, lon_deg={lon_deg}")
+
+            if not (lat_ref and lon_ref and lat_deg and lon_deg):
+                logger.warning("GPS信息不完整")
+                return None
+
+            # 转换为十进制坐标
+            def to_decimal(degree_data, ref):
+                d, m, s = degree_data
+                # 处理不同类型的数据
+                if isinstance(d, tuple):
+                    d = float(d[0]) / float(d[1])
+                else:
+                    d = float(d)
+
+                if isinstance(m, tuple):
+                    m = float(m[0]) / float(m[1])
+                else:
+                    m = float(m)
+
+                if isinstance(s, tuple):
+                    s = float(s[0]) / float(s[1])
+                else:
+                    s = float(s)
+
+                decimal = d + (m / 60.0) + (s / 3600.0)
+                if ref in ['S', 'W']:
+                    decimal = -decimal
+                return decimal
+
+            latitude = to_decimal(lat_deg, lat_ref)
+            longitude = to_decimal(lon_deg, lon_ref)
+
+            logger.info(f"成功提取GPS坐标: 纬度={latitude}, 经度={longitude}")
+
+            return {
                 'latitude': latitude,
                 'longitude': longitude,
-                'coordinate_system': 'WGS84',  # GPS坐标默认是WGS84系统
+                'coordinate_system': 'WGS84'
             }
-
-            if timestamp and datestamp:
-                result['timestamp'] = f"{datestamp} {timestamp}"
-
-            return result
 
         except Exception as e:
             logger.error(f"提取GPS信息时出错: {str(e)}")
+            logger.error(traceback.format_exc())
             return None
 
     def get_image_info(self, image_data: bytes) -> Dict[str, Any]:
-        """
-        获取图像基本信息
-
-        Args:
-            image_data: 图像二进制数据
-
-        Returns:
-            图像信息字典
-        """
+        """获取图像基本信息，包括时间等EXIF数据"""
         try:
             img = Image.open(BytesIO(image_data))
-            return {
+            info = {
                 'format': img.format,
                 'size': img.size,
                 'mode': img.mode
             }
+
+            # 获取EXIF信息
+            if hasattr(img, '_getexif') and img._getexif():
+                exif = img._getexif()
+                if exif:
+                    # 添加所有有用的EXIF信息
+                    for tag, tag_value in exif.items():
+                        tag_name = ExifTags.TAGS.get(tag, str(tag))
+                        # 保留时间相关信息，用于排序
+                        if tag_name in ['DateTime', 'DateTimeOriginal', 'DateTimeDigitized', 'Make', 'Model']:
+                            info[tag_name] = tag_value
+
+                    # 尝试格式化时间信息以便前端展示
+                    if 'DateTimeOriginal' in info or 'DateTime' in info:
+                        timestamp = info.get('DateTimeOriginal', info.get('DateTime', ''))
+                        try:
+                            dt = datetime.strptime(timestamp, '%Y:%m:%d %H:%M:%S')
+                            info['formatted_time'] = dt.strftime('%Y-%m-%d %H:%M:%S')
+                        except ValueError:
+                            logger.warning(f"无法解析时间格式: {timestamp}")
+
+            return info
+
         except Exception as e:
             logger.error(f"获取图像信息时出错: {str(e)}")
             return {}

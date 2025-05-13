@@ -7,6 +7,7 @@ function App() {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [selectedImages, setSelectedImages] = useState([])
   const fileInputRef = useRef(null)
   const messagesEndRef = useRef(null)
 
@@ -66,29 +67,29 @@ function App() {
       formData.append('text', userInput)
 
       const response = await axios.post('http://localhost:8000/process-text',
-  formData,
-  { headers: { 'Content-Type': 'multipart/form-data' } }
-);
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' } }
+      );
 
-// 详细记录地图数据
-console.log("API返回完整数据:", response.data);
+      // 详细记录地图数据
+      console.log("API返回完整数据:", response.data);
 
-// 构建回复消息
-let content = response.data.message || '处理完成';
-let mapData = null;
+      // 构建回复消息
+      let content = response.data.message || '处理完成';
+      let mapData = null;
 
-// 检查并使用map_data字段
-if (response.data.map_data && response.data.map_data.success) {
-  mapData = response.data.map_data;
-  console.log("使用地图数据:", mapData);
-}
+      // 检查并使用map_data字段
+      if (response.data.map_data && response.data.map_data.success) {
+        mapData = response.data.map_data;
+        console.log("使用地图数据:", mapData);
+      }
 
-// 添加系统回复到聊天记录
-setMessages(prev => [...prev, {
-  type: 'assistant',
-  content,
-  mapData
-}]);
+      // 添加系统回复到聊天记录
+      setMessages(prev => [...prev, {
+        type: 'assistant',
+        content,
+        mapData
+      }]);
     } catch (error) {
       console.error('请求失败:', error)
       setMessages(prev => [...prev, {
@@ -100,60 +101,145 @@ setMessages(prev => [...prev, {
     }
   }
 
-  // 处理图片上传
-  const handleImageUpload = async (e) => {
-    const file = e.target.files[0]
-    if (!file) return
+  // 处理图片选择
+  const handleImageSelect = (e) => {
+    const files = Array.from(e.target.files)
+    if (!files.length) return
+
+    // 将选择的文件添加到状态中
+    const newImages = files.map(file => ({
+      file,
+      preview: URL.createObjectURL(file)
+    }))
+
+    setSelectedImages(prev => [...prev, ...newImages])
+
+    // 清空文件输入，允许重复选择
+    e.target.value = null
+  }
+
+  // 处理批量图片上传和行程生成
+  const handleImagesUpload = async () => {
+    if (!selectedImages.length) return
 
     // 添加用户消息到聊天记录（显示图片预览）
-    const reader = new FileReader()
-    reader.onload = async (event) => {
-      setMessages(prev => [...prev, {
-        type: 'human',
-        content: '上传了图片:',
-        image: event.target.result
-      }])
+    setMessages(prev => [...prev, {
+      type: 'human',
+      content: `上传了${selectedImages.length}张图片构建行程:`,
+      images: selectedImages.map(img => img.preview)
+    }])
 
-      // 创建FormData对象上传图片
+    setLoading(true)
+
+    try {
+      // 创建FormData对象，包含所有图片
       const formData = new FormData()
-      formData.append('file', file)
 
-      setLoading(true)
-      try {
-        // 调用后端API处理图片
-        const response = await axios.post('http://localhost:8000/process-image',
-          formData,
-          { headers: { 'Content-Type': 'multipart/form-data' } }
-        )
+      // 添加所有图片文件
+      selectedImages.forEach(imageData => {
+        formData.append('files', imageData.file)
+      })
 
-        // 构建回复消息
+      console.log(`正在上传${selectedImages.length}张图片进行行程规划...`)
+
+      // 调用后端批量处理API
+      const response = await axios.post('http://localhost:8000/process-images',
+        formData,
+        {
+          headers: { 'Content-Type': 'multipart/form-data' },
+          timeout: 60000 // 增加超时时间
+        }
+      )
+
+      console.log("后端返回数据:", response.data)
+
+      if (response.data.success) {
+        // 生成详细的回复内容
+        const locations = response.data.locations || []
         let content = response.data.message || '处理完成'
-        let mapData = null
 
-        // 如果有地图数据
-        if (response.data.map_data && response.data.map_data.success) {
-          mapData = response.data.map_data
+        // 添加位置信息到回复内容
+        if (locations.length > 0) {
+          content += '\n\n行程路线：'
+          locations.forEach((loc, index) => {
+            const time = loc.formatted_time || loc.DateTime || '未知时间'
+            content += `\n${index + 1}. ${loc.filename || '位置'+index} (${time})`
+          })
         }
 
         // 添加系统回复到聊天记录
         setMessages(prev => [...prev, {
           type: 'assistant',
           content,
-          mapData
+          mapData: response.data.map_data
         }])
-      } catch (error) {
-        console.error('上传失败:', error)
+      } else {
+        // 处理失败
         setMessages(prev => [...prev, {
           type: 'assistant',
-          content: '抱歉，处理图片时出错了。'
+          content: response.data.message || '处理图片时出错'
         }])
-      } finally {
-        setLoading(false)
-        // 清空文件输入，允许重复上传同一文件
-        e.target.value = null
       }
+
+    } catch (error) {
+      console.error('批量上传失败:', error)
+      console.error('错误详情:', error.response ? error.response.data : '无详细信息')
+
+      setMessages(prev => [...prev, {
+        type: 'assistant',
+        content: `抱歉，处理图片时出错了。错误信息: ${error.message || '未知错误'}`
+      }])
+    } finally {
+      // 清空已选图片
+      setSelectedImages([])
+      setLoading(false)
     }
-    reader.readAsDataURL(file)
+  }
+
+  // 处理单张图片上传
+  const handleSingleImageUpload = async (imageData) => {
+    try {
+      const formData = new FormData()
+      formData.append('file', imageData.file)
+
+      console.log("正在上传单张图片:", imageData.file.name)
+
+      const response = await axios.post('http://localhost:8000/process-image',
+        formData,
+        {
+          headers: { 'Content-Type': 'multipart/form-data' },
+          timeout: 30000
+        }
+      )
+
+      console.log("后端返回数据:", response.data)
+
+      // 构建回复消息
+      let content = response.data.message || '处理完成'
+      let mapData = null
+
+      if (response.data.map_data && response.data.map_data.success) {
+        mapData = response.data.map_data
+      }
+
+      // 添加系统回复到聊天记录
+      setMessages(prev => [...prev, {
+        type: 'assistant',
+        content,
+        mapData
+      }])
+
+      return true
+    } catch (error) {
+      console.error('上传失败:', error)
+
+      setMessages(prev => [...prev, {
+        type: 'assistant',
+        content: `抱歉，处理图片时出错了。错误信息: ${error.message || '未知错误'}`
+      }])
+
+      return false
+    }
   }
 
   // 键盘回车发送
@@ -162,6 +248,16 @@ setMessages(prev => [...prev, {
       e.preventDefault()
       handleSubmit()
     }
+  }
+
+  // 移除已选图片
+  const removeSelectedImage = (index) => {
+    setSelectedImages(prev => {
+      const newImages = [...prev];
+      URL.revokeObjectURL(newImages[index].preview);
+      newImages.splice(index, 1);
+      return newImages;
+    });
   }
 
   return (
@@ -173,6 +269,15 @@ setMessages(prev => [...prev, {
               {msg.image && (
                 <div className="image-preview">
                   <img src={msg.image} alt="上传的图片" />
+                </div>
+              )}
+              {msg.images && (
+                <div className="images-preview">
+                  {msg.images.map((imgSrc, imgIndex) => (
+                    <div key={imgIndex} className="image-preview">
+                      <img src={imgSrc} alt={`上传的图片 ${imgIndex+1}`} />
+                    </div>
+                  ))}
                 </div>
               )}
               <p>{msg.content}</p>
@@ -200,6 +305,32 @@ setMessages(prev => [...prev, {
         <div ref={messagesEndRef} />
       </div>
 
+      {/* 图片选择预览区域 */}
+      {selectedImages.length > 0 && (
+        <div className="selected-images-container">
+          <div className="selected-images">
+            {selectedImages.map((img, index) => (
+              <div key={index} className="selected-image">
+                <img src={img.preview} alt={`所选图片 ${index+1}`} />
+                <button
+                  className="remove-image"
+                  onClick={() => removeSelectedImage(index)}
+                >
+                  &times;
+                </button>
+              </div>
+            ))}
+          </div>
+          <button
+            className="upload-selected-button"
+            onClick={handleImagesUpload}
+            disabled={loading}
+          >
+            上传并构建行程链 ({selectedImages.length}张照片)
+          </button>
+        </div>
+      )}
+
       <div className="input-container">
         <textarea
           value={input}
@@ -226,8 +357,9 @@ setMessages(prev => [...prev, {
           <input
             type="file"
             ref={fileInputRef}
-            onChange={handleImageUpload}
+            onChange={handleImageSelect}
             accept="image/*"
+            multiple
             style={{ display: 'none' }}
           />
           <button

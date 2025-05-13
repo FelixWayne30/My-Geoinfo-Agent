@@ -45,36 +45,28 @@ class AMapService:
 
         return signature
 
-    def geocode(self, address_info: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def geocode(self, address: str) -> Optional[Dict[str, Any]]:
         """
-        地理编码，使用更加智能的方式将完整地址信息转换为经纬度坐标
+        地理编码，将地址转换为经纬度坐标
+        https://lbs.amap.com/api/webservice/guide/api/georegeo
         """
         try:
-            # 从address_info中获取结构化地址信息
-            address = address_info.get("address", "").strip()
-            province = address_info.get("province", "")
-            city = address_info.get("city", "")
-            district = address_info.get("district", "")
-
+            # 清理地址文本
+            address = address.strip()
             if not address:
                 logger.warning("地址为空")
                 return None
 
             logger.info(f"正在地理编码地址: {address}")
 
-            # 构建参数 - 使用更多信息提高准确性
+            # 构建参数
             params = {
                 'key': self.api_key,
                 'address': address,
                 'output': 'JSON',
+                # 添加city参数可提高准确度
+                'city': '',  # 可以根据上下文设置默认城市
             }
-
-            # 如果有城市信息，优先使用它来提高精确度
-            if city:
-                params['city'] = city
-            elif province:
-                # 如果没有城市但有省份，用省份约束
-                params['city'] = province
 
             # 生成签名
             api_secret = os.getenv('AMAP_SECRET')
@@ -90,16 +82,7 @@ class AMapService:
 
             # 检查结果
             if data.get('status') == '1' and data.get('geocodes') and len(data['geocodes']) > 0:
-                # 获取所有候选结果
-                candidates = data['geocodes']
-
-                # 如果只有一个结果，直接使用
-                if len(candidates) == 1:
-                    result = candidates[0]
-                else:
-                    # 否则使用更智能的匹配逻辑选择最佳结果
-                    result = self._select_best_geocode_result(candidates, address_info)
-
+                result = data['geocodes'][0]
                 # 提取经纬度
                 location = result.get('location', '')
                 if location:
@@ -112,10 +95,8 @@ class AMapService:
                         'city': result.get('city', ''),
                         'district': result.get('district', ''),
                         'adcode': result.get('adcode', ''),
-                        'level': result.get('level', ''),
-                        'confidence': address_info.get('confidence', 0.8)
+                        'level': result.get('level', '')
                     }
-
                     logger.info(f"地理编码成功: {address} -> [{lng},{lat}]")
                     return geo_result
 
@@ -124,6 +105,8 @@ class AMapService:
 
         except Exception as e:
             logger.error(f"地理编码过程中出错: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return None
 
     def _select_best_geocode_result(self, candidates: List[Dict], address_info: Dict) -> Dict:
